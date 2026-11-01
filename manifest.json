@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "楽天・Yahoo!ショッピング 価格比較",
+  "version": "2.0.0",
+  "description": "楽天市場とYahoo!ショッピングの商品ページに、JANコードで調べた相手サイトの価格を表示します。楽天市場へのリンクはアフィリエイトリンクです。",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://search.rakuten.co.jp/*",
+    "https://shopping.yahoo.co.jp/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://item.rakuten.co.jp/*", "https://store.shopping.yahoo.co.jp/*"],
+      "js": ["jan.js", "sites.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
