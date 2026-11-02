@@ -92,15 +92,18 @@ async function search(jan) {
   return { results };
 }
 
-// 楽天の商品ページでは「かごに追加」ボタンの表の直下に置く。
-// 購入エリアが見つからないページ（Yahoo側や古い作りの楽天ページ）では画面右下に固定表示する。
+// 楽天の商品ページでは「かごに追加」ボタンの表の直下、Yahoo!ショッピングの商品ページでは価格欄の直下に置く。
+// どちらも見つからないページ（古い作りの楽天ページなど）では画面右下に固定表示する。
 function placePanel(host, panel) {
   const cartArea = document.getElementById('rakutenLimitedId_aroundCart');
   const cartForm = cartArea?.querySelector('.normal-reserve-form');
+  const yahooPriceArea = document.getElementById('prcdsp');
   if (cartForm) {
     cartForm.after(host);
   } else if (cartArea) {
     cartArea.append(host);
+  } else if (yahooPriceArea) {
+    yahooPriceArea.after(host);
   } else {
     panel.classList.add('floating');
     document.body.append(host);
@@ -194,6 +197,12 @@ async function show(candidates) {
   await load(initial.jan);
 }
 
+// JANが見つからず検索できない場合も、価格を出すときと同じ場所に知らせる
+function showNotFound() {
+  const body = createPanel();
+  body.append(el('div', { className: 'note', textContent: 'このページから商品のJANコードを取得できなかったため、価格を検索できませんでした' }));
+}
+
 function main() {
   const candidates = findJanCandidates();
   if (candidates.length) {
@@ -217,6 +226,11 @@ function main() {
   setTimeout(() => {
     observer.disconnect();
     clearTimeout(timer);
+    if (!document.getElementById('ext-price-compare-panel')) {
+      const found = findJanCandidates();
+      if (found.length) show(found);
+      else showNotFound();
+    }
   }, RETRY_WINDOW_MS);
 }
 
