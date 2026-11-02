@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "楽天・Yahoo!ショッピング 価格比較",
   "version": "1.0.0",
-  "description": "楽天市場とYahoo!ショッピングの商品ページに、JANコードで調べた相手サイトの価格を表示します。楽天市場へのリンクはアフィリエイトリンクです。",
+  "description": "We display the prices from the other sites on product pages on Rakuten Ichiba and Yahoo! Shopping.",
   "permissions": ["storage"],
   "host_permissions": [
     "https://search.rakuten.co.jp/*",
