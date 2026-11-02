@@ -4,6 +4,10 @@
 // 楽天ウェブサービスで発行されたアフィリエイトID
 const RAKUTEN_AFFILIATE_ID = '5905da82.9c82628c.5905da83.9146430e';
 
+// バリューコマースで発行された Yahoo!ショッピング用のサイトID・プログラムID
+const VALUECOMMERCE_SID = '3786417';
+const VALUECOMMERCE_PID = '892739510';
+
 const YAHOO_SHIPPING_LABELS = { 2: '送料無料', 3: '条件付き送料無料' };
 
 // Yahoo!ショッピングの検索ページに埋め込まれた __NEXT_DATA__ から商品を取り出す。
@@ -63,9 +67,9 @@ const SITES = {
     // X=2: 価格の安い順, used=2: 新品のみ
     searchUrl: (jan) => `https://shopping.yahoo.co.jp/search?p=${jan}&X=2&used=2`,
     parse: parseYahooSearch,
-    // Yahoo!ショッピングアフィリエイトは登録した認定サイト（SNS・ブログ等）以外への掲載を禁止しているため、通常のリンクにする
-    isAffiliate: () => false,
-    affiliateUrl: (url) => url,
+    isAffiliate: () => true,
+    affiliateUrl: (url) =>
+      `https://ck.jp.ap.valuecommerce.com/servlet/referral?sid=${VALUECOMMERCE_SID}&pid=${VALUECOMMERCE_PID}&vc_url=${encodeURIComponent(url)}`,
   },
   rakuten: {
     label: '楽天市場',
