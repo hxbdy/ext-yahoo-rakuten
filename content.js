@@ -4,22 +4,30 @@ const RETRY_WINDOW_MS = 5000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 const MAX_RESULTS = 5;
 
-// 楽天のページには Yahoo の価格を、Yahoo のページには楽天の価格を出す
-const TARGET_SITE = location.hostname === 'item.rakuten.co.jp' ? 'yahoo' : 'rakuten';
+// 同じサイトで同じ商品を出品している他のストアと、もう一方のサイトの価格をこの順に出す
+const TARGETS =
+  location.hostname === 'item.rakuten.co.jp'
+    ? [{ site: 'rakuten', otherStores: true }, { site: 'yahoo' }]
+    : [{ site: 'yahoo', otherStores: true }, { site: 'rakuten' }];
 
 const PANEL_CSS = `
   :host { all: initial; display: block; }
-  .panel {
-    box-sizing: border-box; text-align: left;
-    background: #fff; color: #222; border: 1px solid #ccc; border-radius: 8px;
+  .container {
+    box-sizing: border-box; text-align: left; color: #222;
     font: 13px/1.5 -apple-system, "Segoe UI", "Hiragino Sans", Meiryo, sans-serif;
   }
-  .panel.inline { width: 100%; margin-top: 12px; }
-  .panel.floating {
+  .container > * + * { margin-top: 8px; }
+  .container.inline { width: 100%; margin-top: 12px; }
+  .container.floating {
     position: fixed; right: 16px; bottom: 16px; z-index: 2147483647;
     width: 320px; max-height: 70vh; overflow: auto;
-    box-shadow: 0 4px 16px rgba(0,0,0,.2);
   }
+  .panel, .container > .variant {
+    box-sizing: border-box; background: #fff; border: 1px solid #ccc; border-radius: 8px;
+  }
+  .floating .panel, .floating > .variant { box-shadow: 0 4px 16px rgba(0,0,0,.2); }
+  .panel[hidden] { display: none; }
+  .container > .variant { padding: 8px 12px; }
   .header {
     display: flex; align-items: center; gap: 6px;
     padding: 8px 12px; background: #bf0000; color: #fff; font-weight: bold;
@@ -35,7 +43,7 @@ const PANEL_CSS = `
   }
   .body { padding: 8px 12px; }
   .collapsed .body { display: none; }
-  .variant { display: block; margin-bottom: 6px; font-size: 12px; color: #666; }
+  .variant { display: block; font-size: 12px; color: #666; }
   .variant select { display: block; width: 100%; margin-top: 2px; font-size: 12px; }
   .lowest { font-size: 18px; font-weight: bold; color: #bf0000; }
   ul { list-style: none; margin: 4px 0; padding: 0; }
@@ -77,24 +85,43 @@ async function setCached(key, results) {
   await chrome.storage.local.set({ [key]: { time: Date.now(), results } });
 }
 
-async function search(jan) {
-  const cacheKey = `cache:${TARGET_SITE}:${jan}`;
+async function search(siteKey, jan) {
+  const cacheKey = `cache:${siteKey}:${jan}`;
   const cached = await getCached(cacheKey);
   if (cached) return { results: cached };
 
-  const res = await chrome.runtime.sendMessage({ type: 'fetchSearch', site: TARGET_SITE, jan });
+  const res = await chrome.runtime.sendMessage({ type: 'fetchSearch', site: siteKey, jan });
   if (res.error) return res;
 
-  const results = SITES[TARGET_SITE].parse(res.html, jan);
-  if (!results) return { error: `${SITES[TARGET_SITE].label}の検索結果を読み取れませんでした` };
+  const results = SITES[siteKey].parse(res.html, jan);
+  if (!results) return { error: `${SITES[siteKey].label}の検索結果を読み取れませんでした` };
   results.sort((a, b) => a.price - b.price);
   await setCached(cacheKey, results);
   return { results };
 }
 
+// 商品URLは楽天市場が https://item.rakuten.co.jp/{店舗ID}/{商品コード}/、
+// Yahoo!ショッピングが https://store.shopping.yahoo.co.jp/{ストアID}/{商品コード}.html
+function storeIdOf(url) {
+  try {
+    const { hostname, pathname } = new URL(url, location.href);
+    const id = pathname.split('/')[1];
+    return id ? `${hostname}/${id}` : null;
+  } catch {
+    return null;
+  }
+}
+
+// いま見ているストア以外の出品だけ残す
+function excludeCurrentStore({ results, error }) {
+  if (error) return { error };
+  const current = storeIdOf(location.href);
+  return { results: results.filter((item) => storeIdOf(item.url) !== current) };
+}
+
 // 楽天の商品ページでは「かごに追加」ボタンの表の直下、Yahoo!ショッピングの商品ページでは価格欄の直下に置く。
 // どちらも見つからないページ（古い作りの楽天ページなど）では画面右下に固定表示する。
-function placePanel(host, panel) {
+function placeContainer(host, container) {
   const cartArea = document.getElementById('rakutenLimitedId_aroundCart');
   const cartForm = cartArea?.querySelector('.normal-reserve-form');
   const yahooPriceArea = document.getElementById('prcdsp');
@@ -105,37 +132,45 @@ function placePanel(host, panel) {
   } else if (yahooPriceArea) {
     yahooPriceArea.after(host);
   } else {
-    panel.classList.add('floating');
+    container.classList.add('floating');
     document.body.append(host);
     return;
   }
-  panel.classList.add('inline');
+  container.classList.add('inline');
 }
 
-function createPanel() {
-  const site = SITES[TARGET_SITE];
+// パネルをまとめて入れる箱をページに置く
+function createContainer() {
   const host = el('div', { id: 'ext-price-compare-panel' });
   const shadow = host.attachShadow({ mode: 'open' });
+  const container = el('div', { className: 'container' });
+  shadow.append(el('style', { textContent: PANEL_CSS }), container);
+  placeContainer(host, container);
+  return container;
+}
+
+function createPanel(container, { site: siteKey, otherStores }) {
+  const site = SITES[siteKey];
+  const title = otherStores ? `${site.label}の他のストア` : `${site.label}の価格`;
   const toggle = el('button', { textContent: '－', title: '折りたたむ' });
   const body = el('div', { className: 'body' });
-  const header = el('div', { className: 'header' }, [el('span', { className: 'title', textContent: `${site.label}の価格` })]);
+  const header = el('div', { className: 'header' }, [el('span', { className: 'title', textContent: title })]);
   if (site.isAffiliate()) {
     header.append(el('span', { className: 'pr', textContent: 'PR', title: 'このパネルのリンクはアフィリエイトリンクです' }));
   }
   header.append(toggle);
-  const panel = el('div', { className: `panel ${TARGET_SITE}` }, [header, body]);
+  const panel = el('div', { className: `panel ${siteKey}` }, [header, body]);
   toggle.addEventListener('click', () => {
     const collapsed = panel.classList.toggle('collapsed');
     toggle.textContent = collapsed ? '＋' : '－';
     toggle.title = collapsed ? '開く' : '折りたたむ';
   });
-  shadow.append(el('style', { textContent: PANEL_CSS }), panel);
-  placePanel(host, panel);
-  return body;
+  container.append(panel);
+  return { panel, body };
 }
 
-function renderResults({ results, error }, jan) {
-  const site = SITES[TARGET_SITE];
+function renderResults(siteKey, { results, error }, jan) {
+  const site = SITES[siteKey];
   const aff = (url) => site.affiliateUrl(url);
   const nodes = [el('div', { className: 'meta', textContent: `JAN: ${jan}（新品）` })];
 
@@ -163,21 +198,33 @@ function renderResults({ results, error }, jan) {
 }
 
 async function show(candidates) {
-  const body = createPanel();
-  const resultsEl = el('div');
+  const container = createContainer();
+  const panels = TARGETS.map((target) => {
+    const { panel, body } = createPanel(container, target);
+    const resultsEl = el('div');
+    body.append(resultsEl);
+    return { target, panel, resultsEl };
+  });
 
   let currentJan = null;
-  const load = async (jan) => {
-    currentJan = jan;
+  const loadPanel = async ({ target, panel, resultsEl }, jan) => {
     resultsEl.replaceChildren(el('div', { className: 'note', textContent: '読み込み中…' }));
     let result;
     try {
-      result = await search(jan);
+      result = await search(target.site, jan);
     } catch (e) {
       result = { error: e.message };
     }
+    if (target.otherStores) result = excludeCurrentStore(result);
     // 読み込み中に別のバリエーションが選ばれたら古い結果は捨てる
-    if (jan === currentJan) resultsEl.replaceChildren(...renderResults(result, jan));
+    if (jan !== currentJan) return;
+    // 他のストアの出品がなければパネルごと隠す
+    panel.hidden = Boolean(target.otherStores && result.results?.length === 0);
+    resultsEl.replaceChildren(...renderResults(target.site, result, jan));
+  };
+  const load = (jan) => {
+    currentJan = jan;
+    return Promise.all(panels.map((p) => loadPanel(p, jan)));
   };
 
   // 検索結果などから ?variantId= 付きで開いたときは、そのバリエーションを選ぶ
@@ -191,16 +238,20 @@ async function show(candidates) {
       candidates.map((c) => el('option', { value: c.jan, textContent: c.label || c.jan, selected: c === initial }))
     );
     select.addEventListener('change', () => load(select.value));
-    body.append(el('label', { className: 'variant' }, ['バリエーション', select]));
+    // 他のストアのパネルが隠れても選べるよう、パネルの外の先頭に置く
+    container.prepend(el('label', { className: 'variant' }, ['バリエーション', select]));
   }
-  body.append(resultsEl);
   await load(initial.jan);
 }
 
-// JANが見つからず検索できない場合も、価格を出すときと同じ場所に知らせる
+// JANが見つからず検索できない場合も、価格を出すときと同じ場所に知らせる。
+// 他のストアは出品があるときだけ出すので、ここでは出さない。
 function showNotFound() {
-  const body = createPanel();
-  body.append(el('div', { className: 'note', textContent: 'このページから商品のJANコードを取得できなかったため、価格を検索できませんでした' }));
+  const container = createContainer();
+  for (const target of TARGETS.filter((t) => !t.otherStores)) {
+    const { body } = createPanel(container, target);
+    body.append(el('div', { className: 'note', textContent: 'このページから商品のJANコードを取得できなかったため、価格を検索できませんでした' }));
+  }
 }
 
 function main() {
